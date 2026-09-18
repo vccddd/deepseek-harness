@@ -1,4 +1,8 @@
-/** Control transport between the Desktop Host and its launching shell. */
+/**
+ * Control transport between the Desktop Host and its launching shell; the
+ * message set, error semantics, and version governance are documented in
+ * this package's README.
+ */
 
 import { createWriteStream } from 'node:fs'
 import { createInterface } from 'node:readline'

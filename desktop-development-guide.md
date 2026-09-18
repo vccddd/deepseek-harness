@@ -82,7 +82,7 @@
 桌面端采用"立即显示窗口"策略(`2026-09-09-desktop-immediate-window-and-direct-start.zh.md`):
 
 1. 主进程注册特权协议 `dsh-app://`,创建窗口并**立即**从 `app.asar` 内加载打包好的 Web 静态资源(共享加载页)——此时后端还没启动;
-2. 并行拉起 Desktop Host 子进程(stdio IPC,协议版本常量 `DESKTOP_HOST_PROTOCOL_VERSION = 4`,见 `apps/desktop/src/host-protocol.ts`);
+2. 并行拉起 Desktop Host 子进程(stdio IPC,协议版本常量 `DESKTOP_HOST_PROTOCOL_VERSION = 4`,见 `apps/desktop/src/host-protocol.ts`,协议全文见 `apps/desktop-host/README.md`);
 3. Host 就绪后回报认证 URL 与启动注入表,主进程用 URL 换取认证 cookie(见 §3.4);
 4. 渲染页通过 preload 的 `dshDesktopBoot.ready()` 拿到注入表,设置 `__DSH_TRANSPORT__`,放行 `__DSH_BOOT_READY__` 门,SPA 正常启动。
 
