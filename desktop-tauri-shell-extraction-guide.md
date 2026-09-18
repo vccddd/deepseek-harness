@@ -1,6 +1,6 @@
 # 把 Tauri 壳抽成可独立引入的"真壳":评估记录(已否决)
 
-> **决策(2026-09-18)**:不做抽取。`apps/desktop-tauri` 作为与 `apps/desktop`(Electron)并行同仓演进的第二载体,不独立发布、不跨仓引入——即下文 §5 的选项 C,且不推进 Phase 2。本文保留为评估记录:§1 的边界清单、§4 的两条线协议、§7 的债务清单对**并行维护**仍然有效;§6 中仅 Phase 0 的两项(控制通道协议文档化、两种传输的一致性测试)有独立价值,可作为后续维护项随时捡起,其余计划不再执行。
+> **决策(2026-09-18)**:不做抽取。`apps/desktop-tauri` 作为与 `apps/desktop`(Electron)并行同仓演进的第二载体,不独立发布、不跨仓引入——即下文 §5 的选项 C,且不推进 Phase 2。本文保留为评估记录:§1 的边界清单、§4 的两条线协议、§7 的债务清单对**并行维护**仍然有效;§6 中 Phase 0 的两项(控制通道协议文档化、两种传输的一致性测试)有独立价值,**已于 2026-09-18 落地**:协议文档在 `apps/desktop-host/README.md`(消息表、错误语义、`DESKTOP_HOST_PROTOCOL_VERSION` 版本治理),一致性测试在 `apps/desktop-host/tests/control.spec.ts`(同一命令流跑真实 IPC 通道与 stdio 通道对,断言投递一致);§7 的 `SHELL: OnceLock` 全局态也已消除(state 改经 Tauri manager 管理)。其余计划不再执行。
 >
 > 目标读者:接手 `apps/desktop-tauri` 后续演进的 Agent。前置阅读:[desktop-development-guide.md](desktop-development-guide.md)(Electron 版设计解读)、[desktop-tauri-development-guide.md](desktop-tauri-development-guide.md)(当前 Tauri 原型实现解读)。本文原回答一个问题:**这个壳能不能从产品仓库里抽出来,像 git submodule 或 npm 依赖那样被引入,成为一个产品无关的"真正的壳"?** 评估结论曾为:能,但正确形态不是 submodule 也不是纯 npm,而是"Rust crate(Tauri 插件)+ 仓内一个薄应用",并且有一个必须先解决的身份绑定矛盾(§5)——该矛盾正是最终选择并行而非抽取的原因。
 
@@ -66,7 +66,7 @@ ShellConfig {
 
 壳与产品之间真正需要长期稳定的是两条协议,而不是代码:
 
-1. **控制通道 JSON 行协议**(壳 ↔ Host):`ready/fatal/shutdown-complete/update-tasks` 进,`shutdown/update-tasks` 出。现在由 `apps/desktop-host/src/control.ts` 实现 Host 侧,**协议本身没有文档**。抽取前必须:补一份协议说明(消息、字段、错误语义),并让它归入 `DESKTOP_HOST_PROTOCOL_VERSION = 4` 的版本治理——壳实现和 Host 实现各自声明遵守的版本,不匹配时拒绝启动。这是"壳可独立演进"的前提。
+1. **控制通道 JSON 行协议**(壳 ↔ Host):`ready/fatal/shutdown-complete/update-tasks` 进,`shutdown/update-tasks` 出。现在由 `apps/desktop-host/src/control.ts` 实现 Host 侧,协议文档在 `apps/desktop-host/README.md`(消息表、字段、错误语义、传输选择)。抽取若重启,需把它归入 `DESKTOP_HOST_PROTOCOL_VERSION = 4` 的版本治理——壳实现和 Host 实现各自声明遵守的版本,不匹配时拒绝启动(当前版本经 `desktop-runtime.json` 清单核对,不在通道内握手)。这是"壳可独立演进"的前提。
 2. **boot 应答契约**(壳 ↔ 页面):`{ injections, streamBaseUrl }` 加注入表语义(归 `IndexInjection` 体系)。这条已经稳定,文档化即可。
 
 ## 5. 核心矛盾:发布身份绑定 vs 独立引入(必须先回答)
@@ -86,9 +86,9 @@ Electron 版有一条明确的决策(2026-08-25):**壳、dsh 运行时、Web 客
 ## 6. 分阶段落地计划
 
 ### Phase 0:契约固化(纯文档 + 测试,不动结构)
-- [ ] 写控制通道协议文档(消息表、字段、版本字段如何在 ready 前握手)。
-- [ ] 给 `control.ts` 的 stdio 传输与 IPC 传输补齐"协议一致性"测试(同一组消息双向断言)。
-- [ ] 把 `APP_ORIGIN`、argv 模板、dist 根、env 集合整理成一张"产品契约清单"放进本文件 §3 对应位置。
+- [x] 写控制通道协议文档(消息表、字段、错误语义、`DESKTOP_HOST_PROTOCOL_VERSION` 版本治理)。落地:`apps/desktop-host/README.md`。
+- [x] 给 `control.ts` 的 stdio 传输与 IPC 传输补齐"协议一致性"测试(同一组消息双向断言)。落地:`apps/desktop-host/tests/control.spec.ts` + `tests/control-ipc-fixture.ts`(fork 真实 IPC 通道)。
+- [ ] 把 `APP_ORIGIN`、argv 模板、dist 根、env 集合整理成一张"产品契约清单"放进本文件 §3 对应位置(属抽取形态的配置面设计,抽取已否决,仅在重启时再做)。
 
 ### Phase 1:仓内抽包(重构,行为不变)
 - [ ] 新建 Rust crate(建议 `apps/desktop-tauri/shell/` 或 `packages/desktop/shell/`,布局讨论见 §8),把 `web_document.rs / ws_bridge.rs / host.rs / state.rs` 的通用部分迁入,产品细节改为 `ShellConfig` 注入。
@@ -104,7 +104,7 @@ Electron 版有一条明确的决策(2026-08-25):**壳、dsh 运行时、Web 客
 ## 7. 抽取时要顺手解决的已知债务
 
 - profile 初始化目前在 dev 启动器(`scripts/dev.ts`),打包前必须挪进壳启动序(对应 Electron `backend.start` 回调)——抽取时把"启动回调"做进 `ShellConfig`。
-- `main.rs` 的 `SHELL: OnceLock` 全局态改为随插件 state 管理,消除全局可变点。
+- ~~`main.rs` 的 `SHELL: OnceLock` 全局态改为随插件 state 管理,消除全局可变点。~~ 已消除:协议处理器经 `ctx.app_handle().try_state()` 取 `ShellState`,`app.manage()` 在建窗前完成。
 - WS 桥的按窗口绑定(差距表):抽成通用件时把"连接门禁策略"做成 trait(Origin 检查是默认实现),给未来的强绑定留缝。
 - 初始化脚本文本(`init_script()`)应成为壳的模板 + 产品提供全局名集合,而不是整段字符串都算产品配置。
 

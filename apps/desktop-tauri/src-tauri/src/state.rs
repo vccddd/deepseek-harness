@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock};
 
 use tokio::sync::watch;
 
+use crate::hmr_bridge::HmrBridge;
 use crate::host::HostHandle;
 use crate::paths::ShellPaths;
 
@@ -38,6 +39,7 @@ pub struct ShellState {
     window: RwLock<Option<tauri::WebviewWindow>>,
     app: RwLock<Option<tauri::AppHandle>>,
     host: RwLock<Option<Arc<HostHandle>>>,
+    hmr: RwLock<Option<Arc<HmrBridge>>>,
 }
 
 impl ShellState {
@@ -60,6 +62,7 @@ impl ShellState {
             window: RwLock::new(None),
             app: RwLock::new(None),
             host: RwLock::new(None),
+            hmr: RwLock::new(None),
         }
     }
 
@@ -157,5 +160,15 @@ impl ShellState {
     /** Owned Host supervisor, when the Host was launched. */
     pub fn host(&self) -> Option<Arc<HostHandle>> {
         self.host.read().expect("host lock").clone()
+    }
+
+    /// Register the plugins-events bridge owned by the boot bridge commands.
+    pub fn set_hmr(&self, hmr: Arc<HmrBridge>) {
+        *self.hmr.write().expect("hmr lock") = Some(hmr);
+    }
+
+    /// Owned plugins-events bridge, when the shell started it.
+    pub fn hmr(&self) -> Option<Arc<HmrBridge>> {
+        self.hmr.read().expect("hmr lock").clone()
     }
 }

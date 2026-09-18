@@ -18,7 +18,7 @@
 
 再加两个影响设计的差异:
 
-- **插件生态**:`tauri-plugin-*` 官方插件承担 Electron 的内建能力(对话框、单实例、自动更新各有插件)。本壳只用了对话与本窗体相关的几个(见 §2.7)。
+- **插件生态**:`tauri-plugin-*` 官方插件承担 Electron 的内建能力(对话框、单实例、自动更新各有插件)。本壳只用了对话与本窗体相关的几个(见 §2.8)。
 - **私有 API 开关**:macOS 上要让 WebView 背景透明(毛玻璃的 prerequisite),必须开启 `macos-private-api` Cargo feature 并在 `tauri.conf.json` 声明 `macOSPrivateApi: true`,两者必须配对,否则构建脚本报错。Electron 内部走的等价路径,对开发者不可见。
 
 威胁模型与 Electron 版完全一致:**页面(整个 Web UI)不可信,假设被 XSS 攻陷,攻击者也拿不到宿主凭据、文件系统、shell 与任意包管理操作**。后文安全部分(§3)逐条对照防线。
@@ -128,7 +128,18 @@ Electron 用 Node IPC(stdio `'ipc'`,fd 3,V8 序列化帧)传生命周期消息�
 
 目的:保持"凭据只在壳里"与"Web 客户端零改动"(客户端 `remoteStreamUrl()` 本就支持 `streamBaseUrl` 重定向)。**强度差距**(README 已记录):Electron 绑定内核可信的 `webContentsId`,本桥只验证可伪造的 Origin + loopback 随机端口。对"防本机其他进程"弱一档,对"防恶意网页跨站连 Host"等价(浏览器会带上真实 Origin)。
 
-### 2.5 Host 进程监护
+### 2.5 插件事件桥:同源 SSE 的第三条专用通道
+
+**为什么必须有**:插件启停与重建的通知走 Host 的 `/plugins/events` **Server-Sent Events** 通道(`dsh-client-hmr`):Host 重组合后把新的插件图全量推给页面,页面据此增删浏览器插件(Agent Team 顶部按钮就是这么随开关出现/消失的)。Tauri 自定义协议的 `UriSchemeResponder` **只能以一次性完整响应体作答**,没有流式 API——把无限流式的 SSE 经协议转发,`bytes().await` 永远等不到完成,页面的 `EventSource` 挂死,收不到任何推送(表象:开关切了按钮不动)。Electron 版没有这个问题:它的 `forwardWebRequest` 用 `new Response(response.body)` 流式透传。
+
+**Tauri 的等价机制**(`hmr_bridge.rs` + 初始化脚本):
+
+1. 壳在 Host ready 后用 reqwest 流式接口(`bytes_stream`,带 Host cookie)持有这条 SSE 连接,逐行解析 `data: <json>` 帧入队(上限 32 帧,graph 帧是全量快照,丢弃中间帧无害);断开后自动重连,Host 重启换 cookie 也随 `host_connection()` 重取。
+2. 初始化脚本把该端点的 `EventSource` 替换为轮询实现:每秒 `invoke('desktop_hmr_poll')` 取走队列,逐帧按 `message` 事件派发给 hmr 客户端。hmr 客户端只用 `addEventListener('message')` 与 `close()`,最小面即可替换,Web 客户端其余代码零改动。
+
+**实测**:冷启动按钮出现(SSE 建连时 Host 立即推首帧全量图,页面冷启动组合因此完整)、热禁用按钮消失、热启用按钮回来——与 Electron 行为一致。
+
+### 2.6 Host 进程监护
 
 `host.rs` 与 `host-process.ts` 的对照:
 
@@ -142,7 +153,7 @@ Electron 用 Node IPC(stdio `'ipc'`,fd 3,V8 序列化帧)传生命周期消息�
 
 目的:Host 的启动契约完全不变,`apps/desktop-host` 的 argv 与消息协议一个字节没动;变的只是传输载体。退出路径挂在 `RunEvent::ExitRequested` 上,保证关窗前先排干 Host。
 
-### 2.6 页面桥:preload ↔ 初始化脚本
+### 2.7 页面桥:preload ↔ 初始化脚本
 
 初始化脚本(`main.rs` `init_script()`)在页面任何脚本之前运行,暴露的全集与 Electron preload 一一对应:
 
@@ -152,22 +163,23 @@ Electron 用 Node IPC(stdio `'ipc'`,fd 3,V8 序列化帧)传生命周期消息�
 | `dshDesktop` | 类型化产品 API(更新) | 协议版本桩 `{ protocolVersion: 1 }`(更新 UI 因此隐藏,客户端把它当"无更新桥") |
 | `data-platform` | `markDocumentPlatform()` | 直接 `setAttribute`(平台值由 Rust 注入,macos→darwin 映射) |
 | `__DSH_DIRECTORY_PICKER__.pick` | IPC + 原生对话框 | `desktop_pick_directory` 命令 → `tauri-plugin-dialog` 原生选择器 |
+| `EventSource('/plugins/events')` | 原生 EventSource(流式转发透传) | 轮询替换实现,经 `desktop_hmr_poll` 命令消费壳侧 SSE 桥(§2.5) |
 | 主题观察(macOS) | `syncNativeTheme()` | MutationObserver + `desktop_set_theme` |
 
 `desktop_boot` 的应答内容与 Electron 相同:`{ injections, streamBaseUrl }`——注入表来自 Host ready 事件原样透传,`streamBaseUrl` 是流桥 origin。页面 `main.ts` 的启动序(等门 → 设 `__DSH_TRANSPORT__` → 逐条应用注入 → 放行 SPA)**零改动**。
 
-### 2.7 原生集成:用维护中的生态件
+### 2.8 原生集成:用维护中的生态件
 
 | 能力 | 方案 | 替代的 Electron 内建 |
 |---|---|---|
 | 致命错误对话框 | `tauri-plugin-dialog` 原生 message box(页面覆盖层同时保留) | `dialog.showMessageBox` |
 | 目录选择器 | 同插件的 folder picker,挂主窗口 | `dialog.showOpenDialog` |
 | 单实例/profile 锁 | `tauri-plugin-single-instance`,二次启动聚焦已有窗口 | `requestSingleInstanceLock` |
-| Edit 菜单与快捷键 | macOS 上 Tauri 默认菜单自带 | 手工 `Menu.buildFromTemplate` |
+| 应用菜单与 About 面板 | `tauri::menu` 组装(应用子菜单 + 标准 Edit/Window 子菜单,镜像 Electron 菜单模板) | 手工 `Menu.buildFromTemplate` |
 
-目的:这些不自己造。致命路径的展示是"页面覆盖层 + 原生对话框"双通道(`state.rs` `show_fatal()`),由 Host 监视线程安全触发。
+目的:这些不自己造。致命路径的展示是"页面覆盖层 + 原生对话框"双通道(`state.rs` `show_fatal()`),由 Host 监视线程安全触发。Window 子菜单沿用 Tauri 固定子菜单 id(`WINDOW_SUBMENU_ID`),运行时才能把它注册为 NSApp window menu,打开的窗口才会自动列进菜单。
 
-### 2.8 开发工作流
+### 2.9 开发工作流
 
 ```sh
 pnpm run dev:desktop-tauri    # 构建仓库 → 复用 apps/desktop 的准备产物 → tauri dev
@@ -187,7 +199,7 @@ pnpm run start:desktop-tauri  # 产物已备好,直接再启动
 | 攻击场景 | Electron 防线 | Tauri 原型防线 |
 |---|---|---|
 | XSS 想读宿主 cookie | 主进程内存持有 | Rust 内存持有(§2.3) |
-| XSS 直接调系统能力 | 无原始 IPC + sender 校验 | 页面只有 4 个窄命令(boot/pick/theme/上报失败),无文件/进程/参数面 |
+| XSS 直接调系统能力 | 无原始 IPC + sender 校验 | 页面只有 5 个窄命令(boot/pick/theme/上报失败/取插件事件帧),无文件/进程/参数面 |
 | 被攻陷页面开新窗口钓鱼 | `setWindowOpenHandler` deny | WebView 默认无 window.open 通路,`on_navigation` 兜底 |
 | 页面被诱导导航恶意源 | `will-navigate` 白名单 | `navigation_allowed()`:`dsh-app:` + loopback http(s) |
 | 静态资源路径穿越 | resolve 后目录前缀校验 | 组件级拒绝 `..`(§2.2) |
@@ -214,16 +226,18 @@ IPC 面收敛说明:Tauri 的 capability 文件声明页面可 invoke 的权限;
 | 8 | dev home 隔离(`home-tauri`) | 与 Electron dev 并行不互踩 profile | `scripts/dev.ts` |
 | 9 | MIME 取自解析后文件 | 根路径无扩展名,误用 octet-stream 会白屏 | `web_document.rs` |
 | 10 | node 一律解析为绝对路径 | node-bin 启动器相对名会自递归 | `paths.rs` |
+| 11 | 插件事件桥 = 壳持 SSE + 页面轮询 EventSource 替换 | 自定义协议无流式响应;graph 帧全量,轮询无损 | `hmr_bridge.rs`、`main.rs` |
 
 ## 5. 关键文件索引(两侧对照)
 
 | 职责 | Electron | Tauri |
 |---|---|---|
-| 壳入口/窗口/命令 | `apps/desktop/src/main.ts` | `src-tauri/src/main.rs` |
+| 壳入口/窗口/菜单/命令 | `apps/desktop/src/main.ts` | `src-tauri/src/main.rs` |
 | 共享状态(启动事实/凭据/窗口) | main.ts 内闭包 | `src-tauri/src/state.rs` |
 | 静态服务 + 认证转发 | `apps/desktop/src/web-document.ts` | `src-tauri/src/web_document.rs` |
 | Host 监护 | `apps/desktop/src/host-process.ts` | `src-tauri/src/host.rs` |
 | WS 流桥(新增) | main.ts 内改写 | `src-tauri/src/ws_bridge.rs` |
+| 插件事件桥(新增) | `forwardWebRequest` 流式透传 | `src-tauri/src/hmr_bridge.rs` |
 | 路径/运行时解析 | `main.ts` `runtimeResources()` | `src-tauri/src/paths.rs` |
 | Host 控制传输(共享改动) | `process.send`(不变) | `apps/desktop-host/src/control.ts`(env 门控) |
 | 开发启动器 | `apps/desktop/scripts/dev.ts` | `apps/desktop-tauri/scripts/dev.ts` |
@@ -235,9 +249,9 @@ IPC 面收敛说明:Tauri 的 capability 文件声明页面可 invoke 的权限;
 | 自动更新/强制更新/更新任务控制 | 生态路径 `tauri-plugin-updater` + `tauri-plugin-process`;需先有打包与签名,以及与 dsh 发布编排(先载荷后元数据)的对接 |
 | 打包布局(内置 Node/pnpm、`desktop-runtime.json` 校验、签名公证) | 复用 `apps/desktop/scripts/prepare-*` 与 primary-runtime 的 Node;清单校验在 Rust 重写 |
 | profile 初始化在启动器而非壳内 | 打包时挪入壳启动序 |
-| 自定义应用菜单/About、Windows 标题栏 overlay | `tauri::menu` 成熟 API,纯工作量 |
+| Windows 标题栏 overlay、IME 菜单 | `tauri::window` 配置 + 打包时的 Windows 目标;macOS 应用菜单与 About 面板已用 `tauri::menu` 落地 |
 | 红绿灯坐标 | 无公开 API;可评估 objc2 直接调用 |
-| WS 桥按窗口绑定 | 需要壳级每连接票据(当前 URL 形态放不下 query,见 §2.4) |
+| WS 桥按窗口绑定 | 需要壳级每连接票据;客户端 `remoteStreamUrl()` 以绝对路径解析会丢弃 `streamBaseUrl` 的路径段,票据在客户端零改动下无处安放 |
 | Windows/Linux | 控制通道 socket 与 dev 路径为 unix 专用,需移植 |
 
 ## 7. 踩坑记录(给后来者)
