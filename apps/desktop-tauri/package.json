@@ -1,0 +1,16 @@
+{
+  "name": "@deepseek-ai/dsh-desktop-tauri",
+  "description": "Tauri shell prototype for the DeepSeek Harness desktop application",
+  "version": "0.1.6-alpha.2",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx scripts/dev.ts",
+    "start": "tsx scripts/dev.ts --skip-prepare",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.4"
+  }
+}

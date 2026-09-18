@@ -1,0 +1,24 @@
+[package]
+name = "dsh-desktop-tauri"
+version = "0.1.6-alpha.2"
+description = "Tauri shell for the DeepSeek Harness desktop application (development prototype)"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
+window-vibrancy = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+tokio-tungstenite = "0.28"
+futures-util = "0.3"
+http = "1"
+libc = "0.2"
